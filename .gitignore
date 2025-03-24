@@ -1,0 +1,13 @@
+# Virtual environment
+venv/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS generated files
+.DS_Store
+
+# Large files folder (if you plan to store large datasets)
+data/large_files/
