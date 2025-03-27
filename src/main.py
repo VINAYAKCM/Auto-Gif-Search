@@ -3,81 +3,89 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import torch
 import numpy as np
-from clip_module import TextProcessor
-from gif_processor import GifProcessor
-from giphy_api import GiphyAPI
+
+from clip_module import TextProcessor    # Your CLIP text processing module
+from gif_processor import GifProcessor      # Your GIF processing module
+from giphy_api import GiphyAPI              # Your Giphy API integration module
+from gemma2_reply_generator import generate_reply  # Use the Gemma-2 model for reply generation
+
+import nltk
+nltk.download('punkt')
+nltk.download('averaged_perceptron_tagger_eng')
+nltk.download('vader_lexicon')
 
 app = Flask(__name__)
 CORS(app)
 
-# Initialize CLIP modules
+# Global variable to store User 2's message.
+last_message_from_user2 = ""
+
+# Initialize modules.
 text_processor = TextProcessor(model_name="ViT-B/32")
 gif_processor = GifProcessor(model_name="ViT-B/32")
-
-# Initialize Giphy API with your key
+# Replace with your actual Giphy API key.
 giphy_api_key = "dTQTdmW2kntqOKJ1jFfhatYeSoo3PWe7"
 giphy = GiphyAPI(giphy_api_key)
 
 @app.route('/')
 def home():
-    return "Welcome to the GIF Chat App!"
+    return "Welcome to the GIF Chat App API!"
 
-@app.route('/get_gifs_for_text', methods=['POST'])
-def get_gifs_for_text():
-    """
-    1. Get user text from request
-    2. Search Giphy with that text
-    3. For each GIF, compute CLIP embedding
-    4. Compute text embedding
-    5. Rank and return top 6–8
-    """
+@app.route('/send_message_user2', methods=['POST'])
+def send_message_user2():
+    global last_message_from_user2
     data = request.get_json()
-    user_text = data.get("message", "")
+    message = data.get("message", "")
+    last_message_from_user2 = message
+    return jsonify({"message": message, "info": "User 2's message stored."})
 
-    # 1. Giphy search with user_text
-    # If the user text is empty, we can bail out or handle differently
-    if not user_text:
-        return jsonify({"suggested_gifs": [], "similarity_scores": []})
+@app.route('/generate_reply_and_gifs', methods=['POST'])
+def generate_reply_and_gifs():
+    global last_message_from_user2
+    if not last_message_from_user2:
+        return jsonify({"error": "No message from User 2 stored."}), 400
 
-    gif_urls = giphy.search_gifs(user_text, limit=10)  # fetch 10 for better variety
+    # Generate a reply using the Gemma-2 model.
+    generated_reply = generate_reply(last_message_from_user2, max_length=50)
+    
+    # Clean and truncate the generated reply for Giphy search.
+    query_text = generated_reply.strip()
+    max_query_length = 50  # Adjust as needed.
+    if len(query_text) > max_query_length:
+        query_text = query_text[:max_query_length]
 
-    # 2. Compute text embedding
-    text_embedding = text_processor.get_text_embedding(user_text)
+    # Retrieve GIFs from Giphy using the generated reply as the query.
+    gif_urls = giphy.search_gifs(query_text, limit=10)
+    
+    # Compute CLIP embedding for re-ranking GIFs.
+    text_embedding = text_processor.get_text_embedding(query_text)
     text_embedding_np = text_embedding.cpu().numpy()
 
-    # 3. For each GIF URL, compute embeddings
-    all_gif_data = []
+    gif_data = []
     for url in gif_urls:
         try:
             gif_embedding = gif_processor.get_gif_embedding(url)
             gif_embedding_np = gif_embedding.cpu().numpy()
-            all_gif_data.append((url, gif_embedding_np))
+            gif_data.append((url, gif_embedding_np))
         except Exception as e:
             print(f"Error processing {url}: {e}")
 
-    # If no GIFs could be embedded, return empty
-    if not all_gif_data:
+    if not gif_data:
         return jsonify({"suggested_gifs": [], "similarity_scores": []})
-
-    # 4. Compute similarity
-    # We'll do a simple dot product on normalized vectors => same as cosine similarity
-    # text_embedding_np is shape (1, embed_dim)
-    # gif_embedding_np is shape (1, embed_dim)
-    # We'll store them in a list, then compute similarities
+    
     similarities = []
-    for url, emb in all_gif_data:
-        similarity = float(np.dot(text_embedding_np, emb.T))  # since they're normalized, dot=cosine
-        similarities.append((url, similarity))
-
-    # 5. Sort by similarity descending, take top 6
+    for url, emb in gif_data:
+        sim = float(np.dot(text_embedding_np, emb.T))
+        similarities.append((url, sim))
+    
     similarities.sort(key=lambda x: x[1], reverse=True)
-    top_6 = similarities[:6]
-
-    # Return the top 6 URLs + scores
-    suggested_gifs = [item[0] for item in top_6]
-    similarity_scores = [item[1] for item in top_6]
+    top_results = similarities[:6]
+    suggested_gifs = [item[0] for item in top_results]
+    similarity_scores = [item[1] for item in top_results]
 
     return jsonify({
+        "generated_reply": generated_reply,
+        "query_used": query_text,
         "suggested_gifs": suggested_gifs,
         "similarity_scores": similarity_scores
     })
