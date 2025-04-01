@@ -1,83 +1,13 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>GIF Chat App</title>
-  
-  <style>
-    #chat-window {
-      width: 400px;
-      height: 300px;
-      border: 1px solid #ccc;
-      padding: 10px;
-      overflow-y: auto;
-      margin-bottom: 10px;
-    }
-    .message {
-      margin-bottom: 10px;
-    }
-    #gif-suggestions img {
-      width: 100px;
-      margin-right: 5px;
-      margin-top: 5px;
-    }
-  </style>
-
-</head>
-<body>
-  <h1>GIF Chat App</h1>
-  <div id="chat-window"></div>
-  <input type="text" id="message-input" placeholder="Type your message..." style="width: 300px;">
-  <button id="gif-btn">GIF</button>
-  <button id="send-btn">Send</button>
-
-  <h3>GIF Suggestions:</h3>
-  <div id="gif-suggestions"></div>
-
-  <script>
-    const chatWindow = document.getElementById('chat-window');
-    const messageInput = document.getElementById('message-input');
-    const gifBtn = document.getElementById('gif-btn');
-    const sendBtn = document.getElementById('send-btn');
-    const gifSuggestions = document.getElementById('gif-suggestions');
-
-    gifBtn.addEventListener("click", () => {
-      const text = messageInput.value.trim();
-      if (!text) return;
-
-      // Call /get_gifs_for_text
-      fetch("http://127.0.0.1:5000/get_gifs_for_text", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text })
-      })
-      .then(res => res.json())
-      .then(data => {
-        gifSuggestions.innerHTML = "";
-        data.suggested_gifs.forEach((gifUrl, i) => {
-          const img = document.createElement("img");
-          img.src = gifUrl;
-          gifSuggestions.appendChild(img);
-        });
-      })
-      .catch(err => console.error(err));
-    });
-
-    sendBtn.addEventListener("click", () => {
-      const message = messageInput.value.trim();
-      if (!message) return;
-
-      // Display user's message in the chat window
-      const msgDiv = document.createElement("div");
-      msgDiv.className = "message";
-      msgDiv.textContent = "You: " + message;
-      chatWindow.appendChild(msgDiv);
-      chatWindow.scrollTop = chatWindow.scrollHeight;
-
-      // Clear the message input
-      messageInput.value = "";
-      gifSuggestions.innerHTML = "";
-    });
-  </script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vite + React + TS</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>
