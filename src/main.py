@@ -5,9 +5,9 @@ import torch
 import numpy as np
 
 from clip_module import TextProcessor    # Your CLIP text processing module
-from gif_processor import GifProcessor      # Your GIF processing module
-from giphy_api import GiphyAPI              # Your Giphy API integration module
-from gemma2_reply_generator import generate_reply  # Use the Gemma-2 model for reply generation
+from gif_processor import GifProcessor    # Your GIF processing module
+from giphy_api import GiphyAPI            # Your Giphy API integration module
+from reply_generator import ReplyGenerator  # New reply generator
 
 import nltk
 nltk.download('punkt')
@@ -17,12 +17,12 @@ nltk.download('vader_lexicon')
 app = Flask(__name__)
 CORS(app)
 
-# Global variable to store User 2's message.
 last_message_from_user2 = ""
 
-# Initialize modules.
+# Initialize modules
 text_processor = TextProcessor(model_name="ViT-B/32")
 gif_processor = GifProcessor(model_name="ViT-B/32")
+reply_generator = ReplyGenerator()
 # Replace with your actual Giphy API key.
 giphy_api_key = "dTQTdmW2kntqOKJ1jFfhatYeSoo3PWe7"
 giphy = GiphyAPI(giphy_api_key)
@@ -45,24 +45,27 @@ def generate_reply_and_gifs():
     if not last_message_from_user2:
         return jsonify({"error": "No message from User 2 stored."}), 400
 
-    # Generate a reply using the Gemma-2 model.
-    generated_reply = generate_reply(last_message_from_user2, max_length=50)
+    # Generate a reply and get analysis using the new ReplyGenerator
+    generated_reply, analysis = reply_generator.generate_reply(last_message_from_user2)
     
-    # Clean and truncate the generated reply for Giphy search.
-    query_text = generated_reply.strip()
-    max_query_length = 50  # Adjust as needed.
-    if len(query_text) > max_query_length:
-        query_text = query_text[:max_query_length]
-
-    # Retrieve GIFs from Giphy using the generated reply as the query.
-    gif_urls = giphy.search_gifs(query_text, limit=10)
+    # Get search terms for GIFs
+    search_terms = reply_generator.get_gif_search_terms(last_message_from_user2, analysis)
     
-    # Compute CLIP embedding for re-ranking GIFs.
-    text_embedding = text_processor.get_text_embedding(query_text)
+    # Search for GIFs using all search terms
+    all_gifs = []
+    for term in search_terms:
+        gifs = giphy.search_gifs(term, limit=5)
+        all_gifs.extend(gifs)
+    
+    # Remove duplicates while preserving order
+    all_gifs = list(dict.fromkeys(all_gifs))
+    
+    # Compute CLIP embedding for re-ranking the GIFs
+    text_embedding = text_processor.get_text_embedding(last_message_from_user2)
     text_embedding_np = text_embedding.cpu().numpy()
 
     gif_data = []
-    for url in gif_urls:
+    for url in all_gifs:
         try:
             gif_embedding = gif_processor.get_gif_embedding(url)
             gif_embedding_np = gif_embedding.cpu().numpy()
@@ -85,10 +88,11 @@ def generate_reply_and_gifs():
 
     return jsonify({
         "generated_reply": generated_reply,
-        "query_used": query_text,
+        "message_analysis": analysis,
+        "search_terms": search_terms,
         "suggested_gifs": suggested_gifs,
         "similarity_scores": similarity_scores
     })
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, port=5001)
