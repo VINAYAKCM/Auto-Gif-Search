@@ -1,6 +1,8 @@
 from transformers import pipeline
 import nltk
 from nltk.sentiment import SentimentIntensityAnalyzer
+from nltk.tokenize import word_tokenize, sent_tokenize
+from nltk.tag import pos_tag
 import torch
 from typing import Dict, List, Tuple
 import re
@@ -23,116 +25,160 @@ class ReplyGenerator:
             model="facebook/bart-large-mnli",
             return_all_scores=True
         )
+
+        # Download required NLTK data
+        nltk.download('averaged_perceptron_tagger')
+        nltk.download('maxent_ne_chunker')
+        nltk.download('words')
         
-        # Common response patterns for different intents/emotions
-        self.response_patterns = {
-            "positive": [
-                "That's great!",
-                "Awesome!",
-                "I'm happy for you!",
-                "That's wonderful!"
-            ],
-            "negative": [
-                "I'm sorry to hear that",
-                "That must be tough",
-                "I understand",
-                "That's difficult"
-            ],
-            "question": [
-                "Let me think about that",
-                "That's an interesting question",
-                "I'm not sure about that",
-                "What do you think?"
-            ],
-            "greeting": [
-                "Hi there!",
-                "Hello!",
-                "Hey!",
-                "Good to see you!"
-            ]
+        # Message type patterns
+        self.message_patterns = {
+            "question": r'\?$|\b(what|who|where|when|why|how)\b',
+            "exclamation": r'!$|\b(wow|omg|oh|ah|hey|whoa)\b',
+            "greeting": r'\b(hi|hello|hey|good morning|good evening|good afternoon)\b',
+            "farewell": r'\b(bye|goodbye|see you|later|good night)\b',
+            "agreement": r'\b(yes|yeah|sure|okay|ok|alright|agree)\b',
+            "disagreement": r'\b(no|nope|disagree|not really|nah)\b',
+            "gratitude": r'\b(thanks|thank you|appreciate|grateful)\b',
+            "apology": r'\b(sorry|apologize|my bad|oops)\b',
+            "sarcasm": r'\b(sure\.\.\.|right\.\.\.|whatever|oh really)\b',
+            "celebration": r'\b(congrats|congratulations|yay|hurray|awesome)\b',
+            "sympathy": r'\b(sorry to hear|that\'s tough|hope you\'re okay)\b'
+        }
+        
+        # Emotion-specific GIF modifiers
+        self.emotion_modifiers = {
+            "joy": ["happy", "excited", "celebration"],
+            "sadness": ["sad", "crying", "disappointed"],
+            "anger": ["angry", "mad", "frustrated"],
+            "fear": ["scared", "nervous", "worried"],
+            "surprise": ["shocked", "amazed", "wow"],
+            "disgust": ["disgusted", "gross", "ew"],
+            "neutral": ["okay", "neutral", "meh"]
+        }
+
+        # Intent-specific GIF modifiers
+        self.intent_modifiers = {
+            "question": ["thinking", "confused", "wondering"],
+            "statement": ["explaining", "talking", "saying"],
+            "command": ["pointing", "directing", "ordering"],
+            "request": ["asking", "pleading", "requesting"],
+            "opinion": ["judging", "thinking", "considering"]
         }
 
     def analyze_message(self, message: str) -> Dict:
-        """Analyze the message for sentiment, emotion, and intent."""
+        """Analyze the message for sentiment, emotion, intent, and message type."""
         # Get sentiment scores
         sentiment_scores = self.sia.polarity_scores(message)
         
         # Get emotion scores
         emotion_scores = self.emotion_classifier(message)[0]
+        emotion_scores.sort(key=lambda x: x["score"], reverse=True)
         
         # Get intent scores
         intent_scores = self.intent_classifier(message)[0]
+        intent_scores.sort(key=lambda x: x["score"], reverse=True)
+        
+        # Identify message types
+        message_types = []
+        for msg_type, pattern in self.message_patterns.items():
+            if re.search(pattern, message.lower()):
+                message_types.append(msg_type)
+        
+        # POS tagging for key phrases
+        tokens = word_tokenize(message)
+        pos_tags = pos_tag(tokens)
+        
+        # Extract key phrases (nouns, verbs, adjectives)
+        key_phrases = []
+        for i, (word, tag) in enumerate(pos_tags):
+            # Get nouns
+            if tag.startswith('NN'):
+                key_phrases.append(word)
+            # Get verbs
+            elif tag.startswith('VB'):
+                key_phrases.append(word)
+            # Get adjectives with their nouns
+            elif tag.startswith('JJ') and i + 1 < len(pos_tags):
+                next_word, next_tag = pos_tags[i + 1]
+                if next_tag.startswith('NN'):
+                    key_phrases.append(f"{word} {next_word}")
         
         return {
             "sentiment": sentiment_scores,
             "emotions": emotion_scores,
-            "intent": intent_scores
-        }
-
-    def generate_reply(self, message: str) -> Tuple[str, Dict]:
-        """Generate a contextual reply based on message analysis."""
-        # Analyze the message
-        analysis = self.analyze_message(message)
-        
-        # Determine the dominant emotion
-        dominant_emotion = max(analysis["emotions"], key=lambda x: x["score"])["label"]
-        
-        # Determine the intent
-        dominant_intent = max(analysis["intent"], key=lambda x: x["score"])["label"]
-        
-        # Get sentiment polarity
-        sentiment = analysis["sentiment"]["compound"]
-        
-        # Select appropriate response pattern
-        if sentiment > 0.3:
-            pattern = "positive"
-        elif sentiment < -0.3:
-            pattern = "negative"
-        elif "?" in message:
-            pattern = "question"
-        else:
-            pattern = "greeting"
-        
-        # Generate reply
-        import random
-        reply = random.choice(self.response_patterns[pattern])
-        
-        return reply, {
-            "sentiment": sentiment,
-            "emotion": dominant_emotion,
-            "intent": dominant_intent,
-            "pattern": pattern
+            "intent": intent_scores,
+            "message_types": message_types,
+            "key_phrases": key_phrases
         }
 
     def get_gif_search_terms(self, message: str, analysis: Dict) -> List[str]:
-        """Generate search terms for GIFs based on message analysis."""
+        """Generate search terms for GIFs based on detailed message analysis."""
         terms = []
         
-        # Add emotion-based terms
-        terms.append(analysis["emotion"])
+        # Get top 2 emotions with high confidence
+        top_emotions = [e for e in analysis["emotions"][:2] if e["score"] > 0.3]
+        for emotion in top_emotions:
+            terms.extend(self.emotion_modifiers.get(emotion["label"], []))
         
-        # Add intent-based terms
-        terms.append(analysis["intent"])
+        # Get top intent with high confidence
+        top_intent = analysis["intent"][0]
+        if top_intent["score"] > 0.4:
+            terms.extend(self.intent_modifiers.get(top_intent["label"], []))
         
-        # Add pattern-based terms
-        terms.append(analysis["pattern"])
+        # Add message type specific terms
+        for msg_type in analysis["message_types"]:
+            terms.append(msg_type)
         
-        # Simple word extraction (no NLTK required)
-        # Split on spaces and punctuation, keep only words
-        words = re.findall(r'\b\w+\b', message.lower())
-        # Remove common stop words
-        stop_words = {'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', "you're", 
-                     "you've", "you'll", "you'd", 'your', 'yours', 'yourself', 'yourselves', 'he', 
-                     'him', 'his', 'himself', 'she', "she's", 'her', 'hers', 'herself', 'it', "it's", 
-                     'its', 'itself', 'they', 'them', 'their', 'theirs', 'themselves', 'what', 'which', 
-                     'who', 'whom', 'this', 'that', "that'll", 'these', 'those', 'am', 'is', 'are', 
-                     'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 
-                     'does', 'did', 'doing', 'a', 'an', 'the', 'and', 'but', 'if', 'or', 'because', 
-                     'as', 'until', 'while', 'of', 'at', 'by', 'for', 'with', 'about', 'against', 
-                     'between', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 
-                     'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again', 
-                     'further', 'then', 'once'}
-        content_words = [word for word in words if word not in stop_words]
-        terms.extend(content_words[:3])  # Add up to 3 key words
+        # Add key phrases
+        terms.extend(analysis["key_phrases"][:2])  # Add up to 2 key phrases
         
-        return list(set(terms))  # Remove duplicates 
+        # Add sentiment-based terms
+        sentiment = analysis["sentiment"]["compound"]
+        if sentiment > 0.5:
+            terms.extend(["positive", "happy", "great"])
+        elif sentiment < -0.5:
+            terms.extend(["negative", "sad", "bad"])
+        
+        # Clean and prioritize terms
+        terms = list(set(terms))  # Remove duplicates
+        
+        # Sort terms by relevance (emotion and intent first, then others)
+        def term_priority(term):
+            if term in [e["label"] for e in top_emotions]:
+                return 0
+            if term == top_intent["label"]:
+                return 1
+            if term in analysis["message_types"]:
+                return 2
+            if term in analysis["key_phrases"]:
+                return 3
+            return 4
+        
+        terms.sort(key=term_priority)
+        
+        # Return top 5 most relevant terms
+        return terms[:5]
+
+    def generate_reply(self, message: str) -> Tuple[str, Dict]:
+        """Generate a contextual reply based on detailed message analysis."""
+        # Analyze the message
+        analysis = self.analyze_message(message)
+        
+        # Extract key components for reply generation
+        sentiment = analysis["sentiment"]["compound"]
+        top_emotion = analysis["emotions"][0]["label"]
+        top_intent = analysis["intent"][0]["label"]
+        message_types = analysis["message_types"]
+        
+        # Build response context
+        context = {
+            "sentiment": sentiment,
+            "emotion": top_emotion,
+            "intent": top_intent,
+            "types": message_types,
+            "key_phrases": analysis["key_phrases"]
+        }
+        
+        # Return the analysis for GIF selection
+        return "", context  # We're not using the text reply anymore 
