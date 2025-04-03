@@ -116,42 +116,45 @@ class ReplyGenerator:
         """Generate search terms for GIFs based on detailed message analysis."""
         terms = []
         
-        # Get top 2 emotions with high confidence
-        top_emotions = [e for e in analysis["emotions"][:2] if e["score"] > 0.3]
-        for emotion in top_emotions:
-            terms.extend(self.emotion_modifiers.get(emotion["label"], []))
+        # Add emotion-based terms
+        if "emotion" in analysis:
+            emotion = analysis["emotion"]
+            terms.extend(self.emotion_modifiers.get(emotion, []))
         
-        # Get top intent with high confidence
-        top_intent = analysis["intent"][0]
-        if top_intent["score"] > 0.4:
-            terms.extend(self.intent_modifiers.get(top_intent["label"], []))
+        # Add intent-based terms
+        if "intent" in analysis:
+            intent = analysis["intent"]
+            terms.extend(self.intent_modifiers.get(intent, []))
         
         # Add message type specific terms
-        for msg_type in analysis["message_types"]:
-            terms.append(msg_type)
+        if "types" in analysis:
+            for msg_type in analysis["types"]:
+                terms.append(msg_type)
         
         # Add key phrases
-        terms.extend(analysis["key_phrases"][:2])  # Add up to 2 key phrases
+        if "key_phrases" in analysis:
+            terms.extend(analysis["key_phrases"][:2])  # Add up to 2 key phrases
         
         # Add sentiment-based terms
-        sentiment = analysis["sentiment"]["compound"]
-        if sentiment > 0.5:
-            terms.extend(["positive", "happy", "great"])
-        elif sentiment < -0.5:
-            terms.extend(["negative", "sad", "bad"])
+        if "sentiment" in analysis:
+            sentiment = analysis["sentiment"]
+            if sentiment > 0.5:
+                terms.extend(["positive", "happy", "great"])
+            elif sentiment < -0.5:
+                terms.extend(["negative", "sad", "bad"])
         
         # Clean and prioritize terms
         terms = list(set(terms))  # Remove duplicates
         
         # Sort terms by relevance (emotion and intent first, then others)
         def term_priority(term):
-            if term in [e["label"] for e in top_emotions]:
+            if "emotion" in analysis and term in self.emotion_modifiers.get(analysis["emotion"], []):
                 return 0
-            if term == top_intent["label"]:
+            if "intent" in analysis and term in self.intent_modifiers.get(analysis["intent"], []):
                 return 1
-            if term in analysis["message_types"]:
+            if "types" in analysis and term in analysis["types"]:
                 return 2
-            if term in analysis["key_phrases"]:
+            if "key_phrases" in analysis and term in analysis["key_phrases"]:
                 return 3
             return 4
         
@@ -163,13 +166,13 @@ class ReplyGenerator:
     def generate_reply(self, message: str) -> Tuple[str, Dict]:
         """Generate a contextual reply based on detailed message analysis."""
         # Analyze the message
-        analysis = self.analyze_message(message)
+        full_analysis = self.analyze_message(message)
         
         # Extract key components for reply generation
-        sentiment = analysis["sentiment"]["compound"]
-        top_emotion = analysis["emotions"][0]["label"]
-        top_intent = analysis["intent"][0]["label"]
-        message_types = analysis["message_types"]
+        sentiment = full_analysis["sentiment"]["compound"]
+        top_emotion = full_analysis["emotions"][0]["label"]
+        top_intent = full_analysis["intent"][0]["label"]
+        message_types = full_analysis["message_types"]
         
         # Build response context
         context = {
@@ -177,8 +180,8 @@ class ReplyGenerator:
             "emotion": top_emotion,
             "intent": top_intent,
             "types": message_types,
-            "key_phrases": analysis["key_phrases"]
+            "key_phrases": full_analysis["key_phrases"]
         }
         
         # Return the analysis for GIF selection
-        return "", context  # We're not using the text reply anymore 
+        return "", context 

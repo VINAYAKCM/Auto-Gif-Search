@@ -3,14 +3,14 @@ import torch
 from PIL import Image, ImageSequence
 import requests
 from io import BytesIO
-import clip
+import open_clip
 
 class GifProcessor:
-    def __init__(self, model_name="ViT-B/32", device=None):
-        # Set the device (GPU if available, else CPU)
-        self.device = device if device else ("cuda" if torch.cuda.is_available() else "cpu")
-        # Load CLIP model and its preprocessing pipeline
-        self.model, self.preprocess = clip.load(model_name, device=self.device)
+    def __init__(self, model_name="ViT-B/32"):
+        self.device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+        print(f"Device set to use {self.device}")
+        self.model, _, self.preprocess = open_clip.create_model_and_transforms('ViT-B-32', pretrained='openai')
+        self.model = self.model.to(self.device)
 
     def open_image(self, path_or_url):
         """
@@ -51,13 +51,13 @@ class GifProcessor:
                 input_image = self.preprocess(frame).unsqueeze(0).to(self.device)
                 # Get image features using CLIP's image encoder
                 img_features = self.model.encode_image(input_image)
-                # Normalize the embedding (L2 norm)
-                img_features = img_features / img_features.norm(p=2, dim=-1, keepdim=True)
+                # Normalize the embedding
+                img_features = img_features / img_features.norm(dim=-1, keepdim=True)
                 embeddings.append(img_features)
             # Concatenate embeddings and compute the average embedding
             avg_embedding = torch.mean(torch.cat(embeddings, dim=0), dim=0, keepdim=True)
             # Normalize the final embedding
-            avg_embedding = avg_embedding / avg_embedding.norm(p=2, dim=-1, keepdim=True)
+            avg_embedding = avg_embedding / avg_embedding.norm(dim=-1, keepdim=True)
         return avg_embedding
 
 # Example usage:
