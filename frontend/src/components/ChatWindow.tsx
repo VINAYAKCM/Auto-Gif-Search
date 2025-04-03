@@ -8,6 +8,11 @@ import {
   Flex,
   useDisclosure,
   Icon,
+  Tabs,
+  TabList,
+  Tab,
+  TabPanels,
+  TabPanel,
 } from '@chakra-ui/react';
 import { GifPanel } from './GifPanel';
 import { Message } from '../types';
@@ -23,48 +28,77 @@ interface ChatWindowProps {
 export const ChatWindow = ({ userId, messages, onSendMessage }: ChatWindowProps) => {
   const [inputMessage, setInputMessage] = useState('');
   const [suggestedGifs, setSuggestedGifs] = useState<string[]>([]);
+  const [replyGifs, setReplyGifs] = useState<string[]>([]);
   const [isLoadingGifs, setIsLoadingGifs] = useState(false);
+  const [isLoadingReplyGifs, setIsLoadingReplyGifs] = useState(false);
   const { isOpen, onToggle, onClose } = useDisclosure();
   const [lastFetchedText, setLastFetchedText] = useState('');
+  const [lastFetchedReply, setLastFetchedReply] = useState('');
+  const [activeTab, setActiveTab] = useState(0);
 
-  // Function to fetch GIF suggestions from the backend
-  const fetchGifSuggestions = useCallback(async (text: string) => {
-    // Don't fetch if the text is the same as last time
+  // Function to fetch text-based GIF suggestions
+  const fetchTextGifs = useCallback(async (text: string) => {
     if (text === lastFetchedText) return;
     
     setIsLoadingGifs(true);
     try {
-      console.log('Fetching GIFs for text:', text);
-      const response = await axios.post('http://localhost:5001/generate_reply_and_gifs', {
+      console.log('Fetching text GIFs for:', text);
+      const response = await axios.post('http://localhost:5001/generate_text_gifs', {
         message: text
       });
       
-      console.log('Backend response:', response.data);
-
       if (response.data.suggested_gifs && response.data.suggested_gifs.length > 0) {
-        console.log('Found GIFs:', response.data.suggested_gifs);
+        console.log('Found text GIFs:', response.data.suggested_gifs);
         setSuggestedGifs(response.data.suggested_gifs);
         setLastFetchedText(text);
       } else {
-        console.log('No GIFs found in response');
+        console.log('No text GIFs found');
         setSuggestedGifs([]);
       }
     } catch (error) {
-      console.error('Error fetching GIFs:', error);
+      console.error('Error fetching text GIFs:', error);
       setSuggestedGifs([]);
     } finally {
       setIsLoadingGifs(false);
     }
   }, [lastFetchedText]);
 
+  // Function to fetch reply GIF suggestions
+  const fetchReplyGifs = useCallback(async (text: string) => {
+    if (text === lastFetchedReply) return;
+    
+    setIsLoadingReplyGifs(true);
+    try {
+      console.log('Fetching reply GIFs for:', text);
+      const response = await axios.post('http://localhost:5001/generate_reply_gifs', {
+        message: text
+      });
+      
+      if (response.data.suggested_gifs && response.data.suggested_gifs.length > 0) {
+        console.log('Found reply GIFs:', response.data.suggested_gifs);
+        setReplyGifs(response.data.suggested_gifs);
+        setLastFetchedReply(text);
+      } else {
+        console.log('No reply GIFs found');
+        setReplyGifs([]);
+      }
+    } catch (error) {
+      console.error('Error fetching reply GIFs:', error);
+      setReplyGifs([]);
+    } finally {
+      setIsLoadingReplyGifs(false);
+    }
+  }, [lastFetchedReply]);
+
   // Get GIF suggestions when receiving a new message
   useEffect(() => {
     const lastMessage = messages[messages.length - 1];
     if (lastMessage && lastMessage.userId !== userId) {
-      console.log('New message received, fetching GIFs for:', lastMessage.text);
-      fetchGifSuggestions(lastMessage.text);
+      console.log('New message received, fetching reply GIFs for:', lastMessage.text);
+      fetchReplyGifs(lastMessage.text);
+      setActiveTab(0); // Switch to reply GIFs tab
     }
-  }, [messages, userId, fetchGifSuggestions]);
+  }, [messages, userId, fetchReplyGifs]);
 
   // Debounce function for input handling
   const debounce = (func: Function, wait: number) => {
@@ -75,19 +109,22 @@ export const ChatWindow = ({ userId, messages, onSendMessage }: ChatWindowProps)
     };
   };
 
-  // Debounced function for getting GIF suggestions while typing
-  const debouncedGetSuggestions = debounce((text: string) => {
-    if (text.length >= 3) { // Increased minimum length to 3 characters
-      console.log('Debounced GIF fetch for:', text);
-      fetchGifSuggestions(text);
+  // Debounced function for getting text GIF suggestions while typing
+  const debouncedGetTextGifs = debounce((text: string) => {
+    if (text.length >= 3) {
+      console.log('Debounced text GIF fetch for:', text);
+      fetchTextGifs(text);
+      setActiveTab(1); // Switch to text GIFs tab
+    } else {
+      setSuggestedGifs([]); // Clear suggestions if text is too short
     }
-  }, 1000); // Increased debounce time to 1 second
+  }, 1000);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const text = e.target.value;
     setInputMessage(text);
     if (isOpen) {
-      debouncedGetSuggestions(text);
+      debouncedGetTextGifs(text);
     }
   };
 
@@ -95,10 +132,29 @@ export const ChatWindow = ({ userId, messages, onSendMessage }: ChatWindowProps)
     if (inputMessage.trim() || gifUrl) {
       onSendMessage(inputMessage.trim(), gifUrl);
       setInputMessage('');
-      setSuggestedGifs([]); // Clear suggestions after sending
-      onClose(); // Close GIF panel after sending
-      setLastFetchedText(''); // Reset last fetched text
+      setSuggestedGifs([]);
+      setReplyGifs([]);
+      onClose();
+      setLastFetchedText('');
+      setLastFetchedReply('');
     }
+  };
+
+  const handleGifPanelToggle = () => {
+    if (!isOpen) {
+      // When opening the panel
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage && lastMessage.userId !== userId) {
+        // If there's a message to reply to, show reply GIFs
+        fetchReplyGifs(lastMessage.text);
+        setActiveTab(0);
+      } else if (inputMessage.length >= 3) {
+        // If there's text in the input, show text GIFs
+        fetchTextGifs(inputMessage);
+        setActiveTab(1);
+      }
+    }
+    onToggle();
   };
 
   return (
@@ -141,9 +197,9 @@ export const ChatWindow = ({ userId, messages, onSendMessage }: ChatWindowProps)
             <IconButton
               aria-label="Toggle GIF panel"
               icon={<Icon as={FaGift} />}
-              onClick={onToggle}
+              onClick={handleGifPanelToggle}
               mr={2}
-              isLoading={isLoadingGifs}
+              isLoading={isLoadingGifs || isLoadingReplyGifs}
             />
             <Input
               placeholder="Type a message..."
@@ -160,14 +216,46 @@ export const ChatWindow = ({ userId, messages, onSendMessage }: ChatWindowProps)
           </Flex>
 
           {isOpen && (
-            <GifPanel
-              gifs={suggestedGifs}
-              isLoading={isLoadingGifs}
-              onGifSelect={(gifUrl: string) => {
-                handleSendMessage(gifUrl);
-                onClose();
-              }}
-            />
+            <Box>
+              <Tabs index={activeTab} onChange={setActiveTab}>
+                <TabList>
+                  <Tab>Reply GIFs</Tab>
+                  <Tab>Text GIFs</Tab>
+                  <Tab>Search</Tab>
+                </TabList>
+                <TabPanels>
+                  <TabPanel>
+                    <GifPanel
+                      gifs={replyGifs}
+                      isLoading={isLoadingReplyGifs}
+                      onGifSelect={(gifUrl: string) => {
+                        handleSendMessage(gifUrl);
+                        onClose();
+                      }}
+                    />
+                  </TabPanel>
+                  <TabPanel>
+                    <GifPanel
+                      gifs={suggestedGifs}
+                      isLoading={isLoadingGifs}
+                      onGifSelect={(gifUrl: string) => {
+                        handleSendMessage(gifUrl);
+                        onClose();
+                      }}
+                    />
+                  </TabPanel>
+                  <TabPanel>
+                    <GifPanel
+                      mode="search"
+                      onGifSelect={(gifUrl: string) => {
+                        handleSendMessage(gifUrl);
+                        onClose();
+                      }}
+                    />
+                  </TabPanel>
+                </TabPanels>
+              </Tabs>
+            </Box>
           )}
         </Box>
       </VStack>

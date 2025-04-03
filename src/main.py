@@ -239,5 +239,223 @@ def generate_reply_and_gifs():
             "similarity_scores": []
         }), 500
 
+@app.route('/generate_reply_gifs', methods=['POST'])
+def generate_reply_gifs():
+    try:
+        data = request.get_json()
+        message = data.get("message", "")
+        
+        if not message:
+            return jsonify({"error": "No message provided"}), 400
+
+        logger.info(f"Generating reply GIFs for message: {message}")
+
+        try:
+            # Generate a reply and get analysis with is_reply=True
+            generated_reply, analysis = reply_generator.generate_reply(message, is_reply=True)
+            logger.info(f"Generated analysis for reply: {analysis}")
+        except Exception as e:
+            logger.error(f"Error in reply generation: {str(e)}")
+            return jsonify({"error": f"Reply generation failed: {str(e)}"}), 500
+
+        try:
+            # Get search terms for GIFs with is_reply=True
+            search_terms = reply_generator.get_gif_search_terms(message, analysis, is_reply=True)
+            logger.info(f"Reply search terms for '{message}': {search_terms}")
+        except Exception as e:
+            logger.error(f"Error generating reply search terms: {str(e)}")
+            return jsonify({"error": f"Search term generation failed: {str(e)}"}), 500
+        
+        # Search for GIFs using all search terms
+        all_gifs = []
+        for term in search_terms:
+            try:
+                gifs = giphy.search_gifs(term, limit=3)
+                logger.info(f"Found {len(gifs)} reply GIFs for term '{term}'")
+                all_gifs.extend(gifs)
+            except Exception as e:
+                logger.error(f"Error searching for reply term '{term}': {str(e)}")
+                continue
+        
+        # Remove duplicates while preserving order
+        all_gifs = list(dict.fromkeys(all_gifs))
+        logger.info(f"Total unique reply GIFs found: {len(all_gifs)}")
+        
+        if not all_gifs:
+            logger.warning("No reply GIFs found for any search terms")
+            return jsonify({
+                "message_analysis": analysis,
+                "search_terms": search_terms,
+                "suggested_gifs": [],
+                "similarity_scores": []
+            })
+
+        try:
+            # Compute CLIP embedding for re-ranking the GIFs
+            text_embedding = text_processor.get_text_embedding(message)
+            text_embedding_np = text_embedding.cpu().numpy()
+
+            gif_data = []
+            for url in all_gifs:
+                try:
+                    gif_embedding = gif_processor.get_gif_embedding(url)
+                    gif_embedding_np = gif_embedding.cpu().numpy()
+                    gif_data.append((url, gif_embedding_np))
+                except Exception as e:
+                    logger.warning(f"Error processing reply GIF {url}: {str(e)}")
+                    continue
+
+            if not gif_data:
+                logger.warning("No valid reply GIF embeddings generated")
+                return jsonify({
+                    "message_analysis": analysis,
+                    "search_terms": search_terms,
+                    "suggested_gifs": all_gifs[:6],
+                    "similarity_scores": [1.0] * min(6, len(all_gifs))
+                })
+            
+            similarities = []
+            for url, emb in gif_data:
+                sim = float(np.dot(text_embedding_np, emb.T))
+                similarities.append((url, sim))
+            
+            similarities.sort(key=lambda x: x[1], reverse=True)
+            top_results = similarities[:6]
+            suggested_gifs = [item[0] for item in top_results]
+            similarity_scores = [item[1] for item in top_results]
+
+            logger.info(f"Successfully ranked {len(suggested_gifs)} reply GIFs")
+            return jsonify({
+                "message_analysis": analysis,
+                "search_terms": search_terms,
+                "suggested_gifs": suggested_gifs,
+                "similarity_scores": similarity_scores
+            })
+        except Exception as e:
+            logger.error(f"Error in CLIP processing for replies: {str(e)}")
+            # If CLIP fails, return unranked GIFs
+            return jsonify({
+                "message_analysis": analysis,
+                "search_terms": search_terms,
+                "suggested_gifs": all_gifs[:6],
+                "similarity_scores": [1.0] * min(6, len(all_gifs))
+            })
+    except Exception as e:
+        logger.error(f"Error in generate_reply_gifs: {str(e)}")
+        return jsonify({
+            "error": str(e),
+            "suggested_gifs": [],
+            "similarity_scores": []
+        }), 500
+
+@app.route('/generate_text_gifs', methods=['POST'])
+def generate_text_gifs():
+    try:
+        data = request.get_json()
+        message = data.get("message", "")
+        
+        if not message:
+            return jsonify({"error": "No message provided"}), 400
+
+        logger.info(f"Generating text GIFs for message: {message}")
+
+        try:
+            # Generate a reply and get analysis with is_reply=False
+            generated_reply, analysis = reply_generator.generate_reply(message, is_reply=False)
+            logger.info(f"Generated analysis for text: {analysis}")
+        except Exception as e:
+            logger.error(f"Error in text analysis: {str(e)}")
+            return jsonify({"error": f"Text analysis failed: {str(e)}"}), 500
+
+        try:
+            # Get search terms for GIFs with is_reply=False
+            search_terms = reply_generator.get_gif_search_terms(message, analysis, is_reply=False)
+            logger.info(f"Text search terms for '{message}': {search_terms}")
+        except Exception as e:
+            logger.error(f"Error generating text search terms: {str(e)}")
+            return jsonify({"error": f"Search term generation failed: {str(e)}"}), 500
+        
+        # Search for GIFs using all search terms
+        all_gifs = []
+        for term in search_terms:
+            try:
+                gifs = giphy.search_gifs(term, limit=3)
+                logger.info(f"Found {len(gifs)} text GIFs for term '{term}'")
+                all_gifs.extend(gifs)
+            except Exception as e:
+                logger.error(f"Error searching for text term '{term}': {str(e)}")
+                continue
+        
+        # Remove duplicates while preserving order
+        all_gifs = list(dict.fromkeys(all_gifs))
+        logger.info(f"Total unique text GIFs found: {len(all_gifs)}")
+        
+        if not all_gifs:
+            logger.warning("No text GIFs found for any search terms")
+            return jsonify({
+                "message_analysis": analysis,
+                "search_terms": search_terms,
+                "suggested_gifs": [],
+                "similarity_scores": []
+            })
+
+        try:
+            # Compute CLIP embedding for re-ranking the GIFs
+            text_embedding = text_processor.get_text_embedding(message)
+            text_embedding_np = text_embedding.cpu().numpy()
+
+            gif_data = []
+            for url in all_gifs:
+                try:
+                    gif_embedding = gif_processor.get_gif_embedding(url)
+                    gif_embedding_np = gif_embedding.cpu().numpy()
+                    gif_data.append((url, gif_embedding_np))
+                except Exception as e:
+                    logger.warning(f"Error processing text GIF {url}: {str(e)}")
+                    continue
+
+            if not gif_data:
+                logger.warning("No valid text GIF embeddings generated")
+                return jsonify({
+                    "message_analysis": analysis,
+                    "search_terms": search_terms,
+                    "suggested_gifs": all_gifs[:6],
+                    "similarity_scores": [1.0] * min(6, len(all_gifs))
+                })
+            
+            similarities = []
+            for url, emb in gif_data:
+                sim = float(np.dot(text_embedding_np, emb.T))
+                similarities.append((url, sim))
+            
+            similarities.sort(key=lambda x: x[1], reverse=True)
+            top_results = similarities[:6]
+            suggested_gifs = [item[0] for item in top_results]
+            similarity_scores = [item[1] for item in top_results]
+
+            logger.info(f"Successfully ranked {len(suggested_gifs)} text GIFs")
+            return jsonify({
+                "message_analysis": analysis,
+                "search_terms": search_terms,
+                "suggested_gifs": suggested_gifs,
+                "similarity_scores": similarity_scores
+            })
+        except Exception as e:
+            logger.error(f"Error in CLIP processing for text: {str(e)}")
+            # If CLIP fails, return unranked GIFs
+            return jsonify({
+                "message_analysis": analysis,
+                "search_terms": search_terms,
+                "suggested_gifs": all_gifs[:6],
+                "similarity_scores": [1.0] * min(6, len(all_gifs))
+            })
+    except Exception as e:
+        logger.error(f"Error in generate_text_gifs: {str(e)}")
+        return jsonify({
+            "error": str(e),
+            "suggested_gifs": [],
+            "similarity_scores": []
+        }), 500
+
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
